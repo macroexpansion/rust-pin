@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use futures::FutureExt;
 use tokio::time::{sleep, Sleep};
 
 struct SleepFuture {
@@ -23,12 +24,15 @@ impl Future for SleepFuture {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // using Pin
+        /* using Pin */
         // let sleep = Pin::new(&mut self.sleep);
         // sleep.poll(cx)
 
-        // using as_mut()
-        self.sleep.as_mut().poll(cx)
+        /* using as_mut() */
+        // self.sleep.as_mut().poll(cx)
+
+        /* poll_unpin */
+        self.sleep.poll_unpin(cx)
     }
 }
 
