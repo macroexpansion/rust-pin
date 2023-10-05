@@ -9,7 +9,7 @@ use futures::FutureExt;
 use tokio::{
     fs::File,
     io::{AsyncRead, AsyncReadExt, ReadBuf},
-    time::{sleep, Sleep},
+    time::{sleep, Instant, Sleep},
 };
 
 struct SleepFuture {
@@ -40,19 +40,21 @@ impl Future for SleepFuture {
     }
 }
 
-struct SlowRead<R> {
+struct SlowReadPinBox<R> {
     reader: Pin<Box<R>>,
+    sleep: Pin<Box<Sleep>>,
 }
 
-impl<R> SlowRead<R> {
+impl<R> SlowReadPinBox<R> {
     fn new(reader: R) -> Self {
         Self {
             reader: Box::pin(reader),
+            sleep: Box::pin(tokio::time::sleep(Default::default())),
         }
     }
 }
 
-impl<R> AsyncRead for SlowRead<R>
+impl<R> AsyncRead for SlowReadPinBox<R>
 where
     R: AsyncRead,
 {
@@ -61,15 +63,25 @@ where
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        self.reader.as_mut().poll_read(cx, buf)
+        match self.sleep.poll_unpin(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(_) => {
+                self.sleep
+                    .as_mut()
+                    .reset(Instant::now() + Duration::from_secs(1));
+                self.reader.as_mut().poll_read(cx, buf)
+            }
+        }
     }
 }
 
-async fn slow_read() -> Result<(), Box<tokio::io::Error>> {
+async fn slow_read_pin_box() -> Result<(), Box<tokio::io::Error>> {
     let mut buf = vec![0u8; 128 * 1024];
     let reader = File::open("/dev/urandom").await?;
-    let mut slow_reader = SlowRead::new(reader);
+    let mut slow_reader = SlowReadPinBox::new(reader);
+    let before = Instant::now();
     slow_reader.read_exact(&mut buf).await?;
+    println!("Read {} bytes in {:?}", buf.len(), before.elapsed());
     Ok(())
 }
 
@@ -80,5 +92,5 @@ async fn main() {
     let t = tokio::spawn(future);
     let _ = t.await;
 
-    slow_read().await.unwrap();
+    slow_read_pin_box().await.unwrap();
 }
